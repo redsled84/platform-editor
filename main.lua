@@ -182,9 +182,14 @@ function love.load()
 
   activeShape = false
   hoveringOnShape = false
+  wantToLoad = false
 
   -- data = table.load("level.lua")
-  local fileToLoad = loadSavedFile()
+
+  local fileToLoad
+  if wantToLoad then
+    fileToLoad = loadSavedFile()
+  end
   data = fileToLoad ~= nil and table.load(fileToLoad) or {}
   shapes = {}
   if #data > 0 then
@@ -204,6 +209,8 @@ function love.load()
 
   love.graphics.setBackgroundColor(230, 237, 247)
   gridSize = 32
+  gridWidth = 60
+  gridHeight = 60
   viewControls = false
 
   shapeColors = {0, 0, 0}
@@ -246,8 +253,8 @@ function love.draw()
   love.graphics.circle("line", activeX, activeY, activeClickerRadius)
 
   love.graphics.setColor(10, 10, 10, 85)
-  for x = -gridSize*50, gridSize*50, gridSize do
-    for y = -gridSize*50, gridSize * 50, gridSize do
+  for x = 0, gridSize * gridWidth, gridSize do
+    for y = 0, gridSize * gridHeight, gridSize do
       love.graphics.circle("line", x, y, 3)
     end
   end
