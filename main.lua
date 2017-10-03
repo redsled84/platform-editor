@@ -105,6 +105,23 @@ function table.load( sfile )
   return tables[1]
 end
 
+function table.flatten(arr)
+  local result = { }
+  
+  local function flatten(arr)
+    for _, v in ipairs(arr) do
+      if type(v) == "table" then
+        flatten(v)
+      else
+        table.insert(result, v)
+      end
+    end
+  end
+  
+  flatten(arr)
+  return result
+end
+
 function drawPolygon(vertices)
   love.graphics.setColor(210, 150, 175, 120)
   love.graphics.polygon("fill", unpack(vertices))
@@ -125,15 +142,61 @@ function table.clone(org)
   return {unpack(org)}
 end
 
+function vec2(x, y)
+  return {x = x, y = y}
+end
+
+function verticesList(activeVertices)
+  local result = {}
+
+  for i = #activeVertices, 1, -1 do
+    local vec = activeVertices[i]
+    table.insert(result, vec.x)
+    table.insert(result, vec.y)
+  end
+
+  return result
+end
+
+local function loadSavedFile()
+  io.write("Do you want to load an existing file? y/n \n")
+  local fileToLoad
+  local loadExistingFile = io.read()
+  if string.lower(loadExistingFile) == "y" or string.lower(loadExistingFile) == "yes" then
+    io.write("Enter name of an existing file: ")
+    fileToLoad = io.read()
+    fileToLoad = string.find(fileToLoad, ".lua") and fileToLoad or fileToLoad .. ".lua"
+    assert(love.filesystem.exists(fileToLoad))
+  end
+  return fileToLoad
+end
+
 function love.load()
   activeX, activeY = love.mouse.getX(), love.mouse.getY()
   activeShapeType = "polygon"
+  activeClickerRadius = 8
+  activeDeleteIndex = -1
   activeRadius = 0
   activeVertices = {}
-  clicks = {}
+  selectedShape = -1
 
-  data = {}
+  activeShape = false
+  hoveringOnShape = false
 
+  -- data = table.load("level.lua")
+  local fileToLoad = loadSavedFile()
+  data = fileToLoad ~= nil and table.load(fileToLoad) or {}
+  shapes = {}
+  if #data > 0 then
+    local n = #data[1]
+    for i = 1, #data do
+      shapes[#shapes+1] = love.physics.newPolygonShape(data[i].vertices)
+      print("new polygon: ", inspect(data[i].vertices))
+    end
+  end
+
+
+  cameraScale = 1
   cameraX, cameraY = love.graphics.getWidth() / 2, love.graphics.getHeight() / 2
   cameraSpeed = 300
 
@@ -141,98 +204,182 @@ function love.load()
 
   love.graphics.setBackgroundColor(230, 237, 247)
   gridSize = 32
-  viewControls = true
+  viewControls = false
+
+  shapeColors = {0, 0, 0}
+end
+
+
+local selected = {230, 140, 0}
+local normal = {0, 0, 190}
+
+local function drawOutlinedPolygon(color1, color2, vertices)
+  if color2 == nil then
+    color2 = color1
+  end
+
+  love.graphics.setColor(color1[1], color1[2], color1[3], 65)
+  love.graphics.polygon("fill", vertices)
+  love.graphics.setColor(color2[1], color2[2], color2[3], 255)
+  love.graphics.polygon("line", vertices)
 end
 
 function love.draw()
   cam:attach()
 
-  for i=#data, 1, -1 do
-    local object = data[i]
-    if object.shapeType == "polygon" then
-      drawPolygon(object.vertices)
-    elseif object.shapeType == "circle" then
-      drawCircle(object.x, object.y, object.radius)
+  activeShape = false
+  activeDeleteIndex = -1
+  for i=#shapes, 1, -1 do
+    local shape = shapes[i]
+    local x, y = activeX, activeY
+    if shape:testPoint(0, 0, 0, x, y) and selectedShape ~= i then
+      activeDeleteIndex = i
+      activeShape = true
+      drawOutlinedPolygon(selected, nil, table.flatten(data[i].vertices))
+    elseif selectedShape == i then
+      drawOutlinedPolygon({160,25,230}, nil, table.flatten(data[selectedShape].vertices))
+    else
+      drawOutlinedPolygon(normal, nil, table.flatten(data[i].vertices))
     end
   end
 
-  if viewControls then
-    love.graphics.setColor(0, 0, 0)
-    love.graphics.print("Press '1' for a polygon, '2' for a circle", 15, 15)
-  end
+  love.graphics.circle("line", activeX, activeY, activeClickerRadius)
 
-  love.graphics.circle("line", activeX, activeY, 10)
-
-  love.graphics.setColor(10, 10, 10, 255)
-  for x = -gridSize*4, gridSize*85, gridSize do
-    for y = -gridSize*4, gridSize * 85, gridSize do
-      love.graphics.points(x, y)
+  love.graphics.setColor(10, 10, 10, 85)
+  for x = -gridSize*50, gridSize*50, gridSize do
+    for y = -gridSize*50, gridSize * 50, gridSize do
+      love.graphics.circle("line", x, y, 3)
     end
   end
 
-  if #activeVertices > 4 then
-    for i = 2, #activeVertices, 2 do
+  love.graphics.setColor(0, 0, 0, 255)
+  if #activeVertices > 2 then
+    for i = #activeVertices, 1, -1 do
       local current, nextOne
-      if i + 2 > #activeVertices then
-        current = {activeVertices[i-1], activeVertices[i]}
-        nextOne = {activeVertices[1], activeVertices[2]}
+      local vec = activeVertices[i]
+      if i + 1 > #activeVertices then
+        current = vec
+        nextOne = activeVertices[1]
       else
-        current = {activeVertices[i-1], activeVertices[i]}
-        nextOne = {activeVertices[i+1], activeVertices[i+2]}
+        current = vec
+        nextOne = activeVertices[i+1]
       end
 
       if current and nextOne then
-        love.graphics.line(current[1], current[2], nextOne[1], nextOne[2])
+        love.graphics.line(current.x, current.y, nextOne.x, nextOne.y)
       end
     end
-  else
-    love.graphics.line(activeVertices[1], activeVertices[2], activeVertices[#activeVertices-1], activeVertices[#activeVertices])
+  elseif #activeVertices == 2 then
+    love.graphics.line(activeVertices[1].x, activeVertices[1].y, activeVertices[#activeVertices].x, activeVertices[#activeVertices].y)
   end
 
-  for i = 2, #activeVertices, 2 do
-    local verticeRadius = 3
+  for i = #activeVertices, 1, -1 do
+    local verticeRadius = 8
     love.graphics.setColor(0, 235, 80, 130)
-    love.graphics.circle("fill", activeVertices[i-1], activeVertices[i], verticeRadius)
+    love.graphics.circle("fill", activeVertices[i].x, activeVertices[i].y, verticeRadius)
     love.graphics.setColor(0, 235, 80, 245)
-    love.graphics.circle("line", activeVertices[i-1], activeVertices[i], verticeRadius)
+    love.graphics.circle("line", activeVertices[i].x, activeVertices[i].y, verticeRadius)
   end
 
   cam:detach()
+
+  if viewControls then
+    love.graphics.setColor(255, 255, 255, 155)
+    love.graphics.rectangle("fill", 0, 0, 490, 130)
+    love.graphics.setColor(0, 0, 0)
+    love.graphics.print("Press 'W A S D' to move the camera around \n" ..
+    "Press 'q' to zoom out and 'e' to zoom in \n" ..
+    "Press 'c' to increase camera speed and 'z' to decrease camera speed \n" ..
+    "Press LEFT CLICK to add polygon point \n" ..
+    "Press 'space' to add a polygon to the leve \n" ..
+    "Press RIGHT CLICK to select a polygon \n" ..
+    "Press 'r' remove the last placed point, or a selected polygon \n" ..
+    "Press 'm' to minimize this box", 15, 15)
+  else
+    love.graphics.setColor(255, 255, 255, 155)
+    love.graphics.rectangle("fill", 0, 0, 275, 48)
+    love.graphics.setColor(0, 0, 0)
+    love.graphics.print("Press 'm' to open the controls list", 15, 15)
+  end
 end
 
+local clickerTheta = 0
+local clickerThetaStep = math.pi / 2
 function love.update(dt)
+
+  cam:zoomTo(cameraScale)
+
+  -- Cursor radius manipulation
+  activeClickerRadius = math.abs(8 * math.sin(clickerTheta)) + 8
+  clickerTheta = clickerTheta + clickerThetaStep * dt
+
+  -- Ensure camera coords are whole numbers
   cameraX, cameraY = math.ceil(cameraX), math.ceil(cameraY)
+
   cam:lookAt(cameraX, cameraY)
 
+  -- Translating cursor to become grid-locked
   local x, y = cam:worldCoords(love.mouse.getX(), love.mouse.getY())
-  activeX = x - (x % gridSize)
-  activeY = y - (y % gridSize)
+  local xr, yr = (x % gridSize), (y % gridSize)
+  activeX = xr >= gridSize / 2 and x - (xr) + gridSize or x - (xr)
+  activeY = yr >= gridSize / 2 and y - (yr) + gridSize or y - (yr)
 
-  if love.keyboard.isDown("right") then
+  -- Camera movement
+  if love.keyboard.isDown("d") then
     cameraX = cameraX + cameraSpeed * dt
-  elseif love.keyboard.isDown("left") then
+  elseif love.keyboard.isDown("a") then
     cameraX = cameraX - cameraSpeed * dt
   end
-  if love.keyboard.isDown("up") then
+  if love.keyboard.isDown("w") then
     cameraY = cameraY - cameraSpeed * dt
-  elseif love.keyboard.isDown("down") then
+  elseif love.keyboard.isDown("s") then
     cameraY = cameraY + cameraSpeed * dt
   end
 
-  local microcontrol = 20
-  if love.keyboard.isDown("pagedown") then
-    cameraSpeed = cameraSpeed - microcontrol * dt
-    print (cameraSpeed)
-  elseif love.keyboard.isDown("pageup") then
-    cameraSpeed = cameraSpeed + microcontrol * dt
-    print (cameraSpeed)
+
+  -- Camera speed control
+  local microcontrol = 100
+  if love.keyboard.isDown("z") then
+    cameraSpeed = cameraSpeed - microcontrol * dt > 0 and cameraSpeed - microcontrol * dt or 0
+    print("camera speed has been updated to: " .. tostring(cameraSpeed))
+  elseif love.keyboard.isDown("c") then
+    cameraSpeed = cameraSpeed + microcontrol * dt < 1000 and cameraSpeed + microcontrol * dt or 1000
+    print("camera speed has been updated to: " .. tostring(cameraSpeed))
+  end
+
+  -- Camera scale control
+  local scalecontrol = 1
+  if love.keyboard.isDown("q") then
+    cameraScale = cameraScale - scalecontrol * dt < .8 and .8 or cameraScale - scalecontrol * dt
+    print("camera scale has been updated to: " .. tostring(cameraScale))
+  elseif love.keyboard.isDown("e") then
+    cameraScale = cameraScale + scalecontrol * dt > 2 and 2 or cameraScale + scalecontrol * dt
+    print("camera scale has been updated to: " .. tostring(cameraScale))
   end
 end
 
 function love.mousepressed(x, y, button)
   if button == 1 and activeShapeType == "polygon" then
-    activeVertices[#activeVertices+1] = activeX
-    activeVertices[#activeVertices+1] = activeY
+    local found = false
+    for i = 1, #activeVertices do
+      if activeVertices[i].x == activeX and activeVertices[i].y == activeY then
+        found = true
+      end
+    end
+
+    if not found then
+      activeVertices[#activeVertices+1] = vec2(activeX, activeY)
+    else
+      print("there is already a vertice at that coordinate")
+    end
+  end
+  if button == 2 then
+    if selectedShape > 0 then
+      selectedShape = -1
+    end
+    if activeShape then
+      selectedShape = activeDeleteIndex
+    end
   end
 end
 
@@ -241,6 +388,30 @@ function love.mousereleased(x, y, button)
     activeRadius = math.sqrt(math.pow(activeX - (x - x % gridSize), 2) + math.pow(activeY - (y - y % gridSize), 2))
   end
 end
+
+--[[
+Recursive save function
+]]
+
+local n = 0
+local saved = false
+local function saveNewFile(path)
+  n = n + 1
+  local fnString = path .. tostring(n)
+
+  if love.filesystem.exists(fnString) then
+    print(fnString .. " already exists!")
+    saveNewFile(path)
+  end
+
+  completePath = string.find(fnString, ".lua") and fnString or fnString .. ".lua"
+  if not love.filesystem.exists(completePath) and not saved then
+    table.save(data, completePath)
+    print("data has been saved to " .. fnString .. "!")
+  else
+    saveNewFile(path)
+  end
+end 
 
 function love.keypressed(key)
   if key == "1" then
@@ -252,10 +423,17 @@ function love.keypressed(key)
   if key == "escape" then
     love.event.quit()
   elseif key == "r" then
-    love.event.quit("restart")
+    if #activeVertices > 0 then
+      table.remove(activeVertices, #activeVertices)
+    end
+    if selectedShape > 0 then
+      table.remove(data, selectedShape)
+      table.remove(shapes, selectedShape)
+      selectedShape = -1
+    end
   end
 
-  if key == "return" then
+  if key == "space" then
     local object
     local targetX, targetY = cam:worldCoords(activeX, activeY)
     if activeShapeType == "circle" then
@@ -265,12 +443,11 @@ function love.keypressed(key)
         y = activeY,
         shapeType = activeShapeType
       })
-    elseif activeShapeType == "polygon" then
-      print("p[", inspect(table.clone(activeVertices)))
+    elseif activeShapeType == "polygon" and #activeVertices > 2 then
+      shapes[#shapes+1] = love.physics.newPolygonShape(verticesList(activeVertices))
+      print("new polygon: ", inspect(verticesList(activeVertices)))
       table.insert(data, {
-        vertices = table.clone(activeVertices),
-        x = activeX,
-        y = activeY,
+        vertices = verticesList(activeVertices),
         shapeType = activeShapeType
       })
       for i=#activeVertices, 1, -1 do
@@ -280,11 +457,10 @@ function love.keypressed(key)
   end
 
   if key == "p" then
-    if love.filesystem.exists("level.lua") then
-      table.save(data, "level.lua")
-      print("data has been saved to level.lua!")
-    else
-      print("level.lua has not been created!")
-    end
+    saveNewFile("level")
+  end
+
+  if key == "m" then
+    viewControls = not viewControls
   end
 end
